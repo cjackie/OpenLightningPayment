@@ -8,6 +8,7 @@ import hmac
 import hashlib
 import base64
 import time
+from .db import DBUtils, DBAccount
 
 # TODO: this way of generating and storing the secret is not scalable. It 
 # will have problems when we scale it into multiple servers.
@@ -52,7 +53,7 @@ class JwtTokenUtils():
         assert len(jwt_secret) == 32
         self._jwt_secret = jwt_secret
     
-    def build_jwt_token(self, jwt_token_payload: JwtTokenPayload) ->  str:
+    def sign_and_build_jwt_token(self, jwt_token_payload: JwtTokenPayload) ->  str:
         header = json.dumps({
             "typ": "JWT",
             "alg": "HS256"
@@ -107,4 +108,53 @@ class JwtTokenUtils():
         jwt_token_payload.iat = payload.get("iat", 0)
         jwt_token_payload.exp = payload.get("exp", 0)
         return jwt_token_payload
+
+class AuthUserNotFound(Exception):
+    def __init__(self, error_message):
+        Exception.__init__(self, error_message)
+
+class AuthUserExists(Exception):
+    def __init__(self, error_message):
+        Exception.__init__(self, error_message)
+
+
+class Auth():
+    # TODO: externalize this so that salt can be keep as a secret. If salt is known, and 
+    # hash(password) in the DB are leaked, password can be figured by hashing all possible passwords.
+    _salt = b"BTC Price: 49,030.60 on Dec 13, 2021 3:40 AM UTC"
+
+    def __init__(self):
+        pass
+
+    def _password_hash(self, password: str):
+        password_with_salt = Auth._salt + password.encode("ascii")
+        password_hash = hashlib.sha256(password_with_salt).digest()
+        return base64.b64encode(password_hash)
+
+    def authenticate(self, username: str, password: str):
+        query = "SELECT * FROM accounts where username = ?"
+        accounts = DBUtils.select(DBAccount(), query, (username,))
+        if len(accounts) == 0:
+            raise AuthUserNotFound("user {} is not found.".format(username))
+
+        assert len(accounts) == 1
+        account_found = accounts[0]
+
+        if account_found.password == self._password_hash(password):
+            return True
+        else:
+            return False
+
+    def create_account(self, username: str, password: str, email: str):
+        query = "SELECT * FROM accounts where username = ?"
+        accounts = DBUtils.select(DBAccount(), query, (username,))
+        if accounts:
+            raise AuthUserExists("user {} exists.".format(username))
+
+        new_account = DBAccount()
+        new_account.username = username
+        new_account.password = self._password_hash(password)
+        new_account.email = email
+
+        return DBUtils.insert(new_account, "accounts", "account_id")
 

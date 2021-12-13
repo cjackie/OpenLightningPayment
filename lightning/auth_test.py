@@ -1,5 +1,7 @@
 import unittest
-from .auth import JwtTokenUtils, JwtTokenPayload
+import random
+from .db import DBUtils
+from .auth import JwtTokenUtils, JwtTokenPayload, Auth, AuthUserNotFound
 
 class TestJwtTokenHash256(unittest.TestCase):
 
@@ -10,7 +12,7 @@ class TestJwtTokenHash256(unittest.TestCase):
         payload.sub = "sub-294940"
         payload.iat = 1038394
         payload.exp = 2940409
-        token = jwt_token_utils.build_jwt_token(payload)
+        token = jwt_token_utils.sign_and_build_jwt_token(payload)
         self.assertEqual(token, "eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJIUzI1NiJ9.eyJzdWIiOiAic3ViLTI5NDk0MCIsICJpYXQiOiAxMDM4Mzk0LCAiZXhwIjogMjk0MDQwOX0.jO6mOCzSeXgm7B_yIJAAVKVX4aXSWVHUlFQjRepAaes")
         self.assertIsNotNone(jwt_token_utils.verify_and_extract_payload(token))
 
@@ -22,3 +24,27 @@ class TestJwtTokenHash256(unittest.TestCase):
         self.assertEqual(jwt_token_payload.exp, 1639281667)
         self.assertEqual(jwt_token_payload.sub, "1234567890")
         self.assertEqual(jwt_token_payload.iat, 1516239022)
+
+    def test_auth(self):
+        auth = Auth()
+
+        # Test creating user
+        username = "testuser-" + str(random.randint(0, 10e9))
+        password = "dummypass"
+        email = "testuser.{}@gmail.com".format(random.randint(0, 10e9))
+
+        account_created = auth.create_account(username, password, email)
+        self.assertEqual(username, account_created.username)
+        # hash(password) is stored in the DB.
+        self.assertNotEqual(password, account_created.password)
+        self.assertEqual(email, account_created.email)
+
+        # Test authenticate a user
+        self.assertTrue(auth.authenticate(username, password))
+
+        DBUtils.delete("accounts", "account_id", account_created.account_id)
+
+    def test_authFail(self):
+        auth = Auth()
+        with self.assertRaisesRegex(AuthUserNotFound, ".*"):
+            auth.authenticate("user.notfound", "dummypass")
