@@ -7,7 +7,8 @@ class TestJwtTokenHash256(unittest.TestCase):
 
     def test_toString(self):
         secret = b"\xc2\x0f\xb8\xb0\xa1\xa7;C\xdf\x0c\xb2\xce\xc6\x0b\xd7Fa+f~\\r\x071\x81\x1d8b\x02A\x81n"
-        jwt_token_utils = JwtTokenUtils(secret)
+        jwt_token_utils = JwtTokenUtils()
+        jwt_token_utils._jwt_secret = secret
         payload = JwtTokenPayload()
         payload.sub = "sub-294940"
         payload.iat = 1038394
@@ -19,7 +20,8 @@ class TestJwtTokenHash256(unittest.TestCase):
     def test_toObject(self):
         jwt_token_str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjE2MzkyODE2Njd9.AtWnpTteeIFUC2VpHJejyEnOixiGUWe97isDRksttLg"
         secret = b"7\xf2\xe77U\xcd\xe5o-\xba\x9b\xf2\xb7\xd6\xe4\xf1\xa9\x07\x96\xb4\x9c\xd7\xbe\xf9\xd3QT\xf9H\x0f\x1f\x0e"
-        jwt_token_utils = JwtTokenUtils(secret)
+        jwt_token_utils = JwtTokenUtils()
+        jwt_token_utils._jwt_secret = secret
         jwt_token_payload = jwt_token_utils.verify_and_extract_payload(jwt_token_str)
         self.assertEqual(jwt_token_payload.exp, 1639281667)
         self.assertEqual(jwt_token_payload.sub, "1234567890")

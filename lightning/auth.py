@@ -39,6 +39,7 @@ def _remove_padding(base64_encoded: str):
 class JwtTokenPayload():
     def __init__(self):
         # The "sub" (subject) claim identifies the principal that is the subject of the JWT.
+        # "sub" is account username in our case.
         self.sub = ""
         # It stands for "Issued At" in UNIX time in seconds.   
         self.iat = 0
@@ -49,9 +50,8 @@ class JwtTokenPayload():
 # Reference for human: https://jwt.io/introduction. 
 # Reference for the dead: https://datatracker.ietf.org/doc/html/rfc7519.
 class JwtTokenUtils():
-    def __init__(self, jwt_secret: bytes):
-        assert len(jwt_secret) == 32
-        self._jwt_secret = jwt_secret
+    def __init__(self):
+        self._jwt_secret = _jwt_secret
     
     def sign_and_build_jwt_token(self, jwt_token_payload: JwtTokenPayload) ->  str:
         header = json.dumps({
