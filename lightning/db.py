@@ -5,12 +5,18 @@ from copy import deepcopy
 from .pubsub import Pubsub
 import logging
 
-DB_PATH = os.path.dirname(os.path.realpath(__file__)) + "/.database.db"
 LOGGER = logging.Logger(__file__)
+
+class DatabaseParams():
+    _DBPath = os.path.dirname(os.path.realpath(__file__)) + "/.database.db"
+
+    @classmethod
+    def set_db_path(cls, path):
+        cls._DBPath = path
 
 class DBUtils():
     def update(table_name, field_values: dict, id_column, id_column_value):
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DatabaseParams._DBPath) as conn:
             cursor = conn.cursor()
             field_value_strs = []
             args = []
@@ -26,7 +32,7 @@ class DBUtils():
             cursor.execute(update_statement, tuple(args))
 
     def delete(table_name, id_column, id_column_value):
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DatabaseParams._DBPath) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM {} WHERE {} = ?".format(table_name, id_column), (id_column_value, ))
             cursor.close()
@@ -38,7 +44,7 @@ class DBUtils():
         @select_template: string
         @args: tuple
         """
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DatabaseParams._DBPath) as conn:
             cursor = conn.cursor()
             cursor.execute(select_template, args)
             field_names = [d[0] for d in cursor.description]
@@ -59,7 +65,7 @@ class DBUtils():
         column with the same name in @table_name.
         @id_column_name, if available the ID for the inserted object is populated in @id_column_name field of @obj.
         """
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(DatabaseParams._DBPath) as conn:
             # Prepare INSERT statement.
             columns = list(obj.__dict__.keys())
             # Kepp columns with non default values
@@ -143,7 +149,7 @@ class DBInvoice():
         self.account_id: int = 0
         # Unix time in seconds.
         self.created_at = 0
-        # Amount requested in USD.
+        # Amount requested in USD in cents. 1 dollar = 100 cents
         self.amount_requested = 0
         # The echange rate SAT/USD.
         self.exchange_rate = 0
