@@ -1,4 +1,4 @@
-from .socket_handler import _JsonRpcHandler
+from .socket_handler import Feed
 from copy import copy
 import asyncio
 from .pubsub import Pubsub
@@ -8,38 +8,36 @@ from .db import DBInvoice, DBAccount, DBUtils
 import time
 from .auth import JwtTokenUtils, JwtTokenPayload
 
-class JsonRpcHandlerTest(unittest.TestCase):
+class FeedTest(unittest.TestCase):
 
-    def test_createInvoice(self):
-        class JsonRpcHandlerUnderTest(_JsonRpcHandler):
-            def __init__(self):
-                _JsonRpcHandler.__init__(self)
+    def test_getFinalizedInvoices(self):
+        feed = Feed()
 
-            def _get_account_id(self):
-                return 10
+        # Mock the feed as authenticated.
+        feed.exp = int(time.time()) + 60*60*24
+        feed.account_id = 1
 
-            async def _exchange_info(self):
-                return {"sat_per_usd": 2000}
+        # Select the type of the feed
+        feed.select(Feed.FEED_FINALIZED_INVOICES)
 
-            async def _db_create_invoice(self, new_invoice: DBInvoice):
-                new_invoice.invoice_id = 1
-                def pending_invoice_ready():
-                    pending_invoice = copy(new_invoice)
-                    pending_invoice.encoded_invoice = "encode-invoice"
-                    pending_invoice.state = "pending"
-                    pending_invoice.expired_at = 1023508393
-                    Pubsub.instance.publish("/invoice/pending", pending_invoice)
-                asyncio.get_event_loop().call_later(0.5, pending_invoice_ready)
-                
-                return new_invoice
+        self.assertEqual(feed.get(), [])
+        
+        # Publish a unrelated invoice
+        finalized_invoice = DBInvoice()
+        finalized_invoice.account_id = 12
+        finalized_invoice.invoice_id = 19
+        finalized_invoice.status = "paid" 
+        Pubsub.instance.publish("/invoice/finalized", finalized_invoice)
+        self.assertEqual(feed.get(), [])
 
-        handler = JsonRpcHandlerUnderTest()
-        invoice = asyncio.run(handler.jsonrpc_create_invoice(1000))
-        self.assertEqual(invoice["invoice_id"], 1)
-        self.assertEqual(invoice["encoded_invoice"], "encode-invoice")
-        self.assertEqual(invoice["expired_at"], 1023508393)
-        self.assertEqual(invoice["amount_requested"], 1000)
-        self.assertEqual(invoice["exchange_rate"], 2000)
+        # Publish a related invoices
+        finalized_invoice.account_id = 1
+        Pubsub.instance.publish("/invoice/finalized", finalized_invoice)
+        result = feed.get()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["invoice_id"], 19)
+        self.assertEqual(result[0]["status"], "paid")
+        self.assertEqual(feed.finalized_invoices, [])
 
     def test_authenticate(self):
         # Create the account for the token creation
@@ -58,10 +56,10 @@ class JsonRpcHandlerTest(unittest.TestCase):
         token = JwtTokenUtils().sign_and_build_jwt_token(payload)
 
         # Test
-        handler = _JsonRpcHandler()
-        self.assertEqual(asyncio.run(handler.jsonrpc_authenticate(token)), "ok")
-        self.assertEqual(handler.exp, payload.exp)
-        self.assertEqual(handler.account_id, created_account.account_id)
+        feed = Feed()
+        feed.authenticate(token)
+        self.assertEqual(feed.exp, payload.exp)
+        self.assertEqual(feed.account_id, created_account.account_id)
         
         DBUtils.delete("accounts", "account_id", created_account.account_id)
 
