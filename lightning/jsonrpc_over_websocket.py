@@ -29,7 +29,11 @@ class JsonRpcException(Exception):
         # Surface to the client.
         self.message_to_client = message_to_client
 
-class WebSocketServerProtocolWrapper:
+class WebSocketSend():
+    async def send(self, data:str):
+        raise NotImplementedError("Must be implemented")
+
+class WebSocketServerProtocolWrapper(WebSocketSend):
     def __init__(self, websocket: WebSocketServerProtocol):
         self.websocket = websocket
         self.messages = websocket.messages
@@ -43,27 +47,45 @@ class WebSocketServerProtocolWrapper:
     async def close():
         return await self.websocket.close()
 
-class JsonRpc():
-    '''
-    The names of JSON RPC method in this class have the form "_jsonrpc_{method_name}". "method_name"
-    is the name that exposed to outside. For example def _jsonrpc_echo(self), "echo" is the method callable
-    by websocket_handler.
-    Each websocket must have an unqiue instance of JsonRpc, since JsonRpc is stateful.
+class JsonRpcRequest():
+    def __init__(self, jsonrpc, method, params, id):
+        self.jsonrpc = jsonrpc
+        self.method = method
+        self.params = params
+        self.id = id
 
-    How to use it:
-        jsonrpc = JsonRpc(WebSocketServerProtocolWrapper(websocket))
-        handlers = [asyncio.create_task(jsonrpc.handle()) for _ in range(3)]
-        await asyncio.gather([handlers])
-    where 3 is the number of handlers for the websocket i.e the max "concurrent" request processing for the websoecket.
-    '''
-    def __init__(self, websocket: WebSocketServerProtocolWrapper):
-        self.echo_state = None
-        self.running = True
-        self.websocket = websocket
+class JsonRpcHandler():
+    def can_handle(request: JsonRpcRequest) -> bool: 
+        raise NotImplementedError("")
 
-        # Auth related
+    async def handle(request: JsonRpcRequest):
+        raise NotImplementedError("")
+
+class JsonRpcSession():
+    '''
+    global state per websocket
+    '''
+    def __init__(self):
+        # Auth related. If not None, then account_id is the login user for the websocket.
         self.account_id = None
         self.exp = 0
+
+class JsonRpcHandlerImpl(JsonRpcHandler):
+    '''
+    The names of JSON RPC method in this class have the form "_jsonrpc_{method_name}". "method_name"
+    is the name that exposed to outside. For example def _jsonrpc_echo(self), "echo" is the method.
+    '''
+    def __init__(self, websocket_send: WebSocketSend, jsonrpc_session: JsonRpcSession):
+        self.jsonrpc_session = jsonrpc_session
+        self.websocket_send = websocket_send
+        self.jsonrpc_methods = {}
+        for maybe_jsonrpc_method_name in self.__dir__():
+            maybe_method = self.__getattribute__(maybe_jsonrpc_method_name)
+            if maybe_jsonrpc_method_name.startswith("_jsonrpc_"):
+                assert maybe_method and typing.types.MethodType == type(maybe_method)
+                self.jsonrpc_methods[maybe_jsonrpc_method_name[len("_jsonrpc_"):]] = maybe_method
+
+        LOGGER.debug("There are {} number of methods: {}".format(len(self.jsonrpc_methods), ",".join(self.jsonrpc_methods.keys())))
 
     async def _jsonrpc_authenticate(self, jwt_token: str):
         '''
@@ -83,8 +105,8 @@ class JsonRpc():
         except Exception as e:
             raise JsonRpcException(str(e), JSONRPC_ERROR_CODE_INTERNAL_ERROR)
         
-        self.account_id = account.account_id
-        self.exp = payload.exp
+        self.jsonrpc_session.account_id = account.account_id
+        self.jsonrpc_session.exp = payload.exp
         return "ok"
 
     '''
@@ -105,18 +127,43 @@ class JsonRpc():
         print("echo after asyncio.sleep")
         return msg
 
+    def can_handle(self, request: JsonRpcRequest) -> bool:
+        return request.method in self.jsonrpc_methods
+
+    async def handle(self, request: JsonRpcRequest):
+        assert request.method in self.jsonrpc_methods
+        if type(request.params) == dict:
+            result = await self.jsonrpc_methods[request.method](**request.params)
+        else:
+            result = await self.jsonrpc_methods[request.method](*request.params)
+        response = {
+            "jsonrpc": request.jsonrpc,
+            "result": result,
+            "id": request.id
+        }
+        await self.websocket_send.send(json.dumps(response))
+
+class JsonRpc():
+    '''
+    Each websocket must have an unqiue instance of JsonRpc, since JsonRpc is stateful.
+
+    How to use it:
+        jsonrpc = JsonRpc(WebSocketServerProtocolWrapper(websocket))
+        handlers = [asyncio.create_task(jsonrpc.handle()) for _ in range(3)]
+        await asyncio.gather([handlers])
+    where 3 is the number of handlers for the websocket i.e the max "concurrent" request processing for the websoecket.
+    '''
+    def __init__(self, websocket: WebSocketServerProtocolWrapper):
+        self.running = True
+        self.websocket = websocket
+        self.jsonrpc_session = JsonRpcSession()
+
     def stop(self):
         self.running = False
 
     async def handle(self):
-        jsonrpc_methods = {}
-        for maybe_jsonrpc_method_name in self.__dir__():
-            maybe_method = self.__getattribute__(maybe_jsonrpc_method_name)
-            if maybe_jsonrpc_method_name.startswith("_jsonrpc_"):
-                assert maybe_method and typing.types.MethodType == type(maybe_method)
-                jsonrpc_methods[maybe_jsonrpc_method_name[len("_jsonrpc_"):]] = maybe_method
-            
-        LOGGER.debug("There are {} number of methods: {}".format(len(jsonrpc_methods), ",".join(jsonrpc_methods.keys())))
+        handlers: typing.List[JsonRpcHandler] = []
+        handlers.append(JsonRpcHandlerImpl(self.websocket, self.jsonrpc_session))
 
         while self.running:
             request_id = None
@@ -137,25 +184,26 @@ class JsonRpc():
                 request_id = jsonrpc_request["id"] if jsonrpc_request["id"] else None
                 params = jsonrpc_request["params"] if jsonrpc_request["params"] else []
 
-                if "method" not in jsonrpc_request or jsonrpc_request["method"] not in jsonrpc_methods:
+                # if "method" not in jsonrpc_request or jsonrpc_request["method"] not in jsonrpc_methods:
+                #     raise JsonRpcException("method not found", JSONRPC_ERROR_CODE_METHOD_NOT_FOUND)
+
+                if "jsonrpc" not in jsonrpc_request or jsonrpc_request["jsonrpc"] != "2.0":
+                    raise JsonRpcException("Unsupported version", JSONRPC_ERROR_CODE_INVALID_REQUEST)
+                if "method" not in jsonrpc_request:
+                    raise JsonRpcException("method must be specified", JSONRPC_ERROR_CODE_METHOD_NOT_FOUND)
+
+                request_obj = JsonRpcRequest(jsonrpc_request["jsonrpc"], jsonrpc_request["method"], 
+                    jsonrpc_request.get("params", []), jsonrpc_request.get("id", None))
+
+                handled = False
+                for handler in  handlers:
+                    if handler.can_handle(request_obj):
+                        await handler.handle(request_obj)
+                        handled = True
+                        break
+                
+                if not handled:
                     raise JsonRpcException("method not found", JSONRPC_ERROR_CODE_METHOD_NOT_FOUND)
-
-                if jsonrpc_request["jsonrpc"] is None or jsonrpc_request["jsonrpc"] != "2.0":
-                    raise JsonRpcException("Unsupported version", JSONRPC_ERROR_CODE_INVALID_REQUEST, 
-                        "Only support JSONRPC 2.0")
-
-                # TODO: how to surface the error that the params does not match with the method signature.
-                if type(params) == dict:
-                    result = await jsonrpc_methods[jsonrpc_request["method"]](**params)
-                else:
-                    result = await jsonrpc_methods[jsonrpc_request["method"]](*params)
-                response = {
-                    "jsonrpc": "2.0",
-                    "result": result,
-                    "id": request_id
-                }
-                await self.websocket.send(json.dumps(response))    
-
             except JsonRpcException as e:
                 LOGGER.debug("websocket_handler JsonRpcException: {}".format(str(e)))
                 response = {

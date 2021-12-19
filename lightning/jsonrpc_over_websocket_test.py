@@ -1,4 +1,4 @@
-from .jsonrpc_over_websocket import JsonRpc, WebSocketServerProtocolWrapper
+from .jsonrpc_over_websocket import JsonRpc, WebSocketServerProtocolWrapper, JsonRpcHandlerImpl, JsonRpcSession
 import websockets
 from copy import copy
 import asyncio
@@ -22,7 +22,6 @@ class JsonRpcHandlerTest(unittest.TestCase):
                 self.sent.append(data)
                 raise websockets.exceptions.ConnectionClosedError(None, None)
             async def recv(self):
-                print("recv")
                 return self.messages.pop(0)
             async def close():
                 pass
@@ -37,6 +36,7 @@ class JsonRpcHandlerTest(unittest.TestCase):
         loop.run_until_complete(jsonrpc.handle())
         self.assertEqual(len(mock_websocket.sent), 1)
         response = json.loads(mock_websocket.sent[0])
+        print(mock_websocket.sent)
         self.assertEqual(response["id"], 2)
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["result"], "hello from client request 2")
@@ -61,10 +61,11 @@ class JsonRpcHandlerTest(unittest.TestCase):
         class MockWebSocket():
             def __init__(self):
                 self.messages = []
-        jsonrpc = JsonRpc(WebSocketServerProtocolWrapper(MockWebSocket()))
-        self.assertEqual(asyncio.run(jsonrpc._jsonrpc_authenticate(token)), "ok")
-        self.assertEqual(jsonrpc.exp, payload.exp)
-        self.assertEqual(jsonrpc.account_id, created_account.account_id)
+        session = JsonRpcSession()
+        impl = JsonRpcHandlerImpl(None, session)
+        self.assertEqual(asyncio.run(impl._jsonrpc_authenticate(token)), "ok")
+        self.assertEqual(session.exp, payload.exp)
+        self.assertEqual(session.account_id, created_account.account_id)
         
         DBUtils.delete("accounts", "account_id", created_account.account_id)
 
