@@ -9,29 +9,14 @@ import typing
 from .auth import JwtTokenDecodeError, JwtTokenUtils, JwtTokenPayload
 import time
 from .db import DBAccount
+from .jsonrpc_handler import JsonRpcException, WebSocketSend, JsonRpcRequest, JsonRpcHandler, JsonRpcSession
+from .jsonrpc_handler import JSONRPC_ERROR_CODE_PARSE_ERROR, JSONRPC_ERROR_CODE_INVALID_REQUEST, JSONRPC_ERROR_CODE_METHOD_NOT_FOUND, JSONRPC_ERROR_CODE_INVALID_PARAMS, JSONRPC_ERROR_CODE_INTERNAL_ERROR
 
 # TODO: Move this to a top level code.
 logging.basicConfig(format='%(filename)s:%(funcName)s:%(levelname)s:%(message)s')
 
 LOGGER = logging.getLogger(__file__)
 LOGGER.setLevel(Config.LoggingLevel)
-
-JSONRPC_ERROR_CODE_PARSE_ERROR = -32700
-JSONRPC_ERROR_CODE_INVALID_REQUEST = -32600
-JSONRPC_ERROR_CODE_METHOD_NOT_FOUND = -32601
-JSONRPC_ERROR_CODE_INVALID_PARAMS = -32602
-JSONRPC_ERROR_CODE_INTERNAL_ERROR = -32603
-
-class JsonRpcException(Exception):
-    def __init__(self, error_message, code, message_to_client: str = ""):
-        Exception.__init__(self, error_message)
-        self.code = code
-        # Surface to the client.
-        self.message_to_client = message_to_client
-
-class WebSocketSend():
-    async def send(self, data:str):
-        raise NotImplementedError("Must be implemented")
 
 class WebSocketServerProtocolWrapper(WebSocketSend):
     def __init__(self, websocket: WebSocketServerProtocol):
@@ -46,29 +31,6 @@ class WebSocketServerProtocolWrapper(WebSocketSend):
     
     async def close():
         return await self.websocket.close()
-
-class JsonRpcRequest():
-    def __init__(self, jsonrpc, method, params, id):
-        self.jsonrpc = jsonrpc
-        self.method = method
-        self.params = params
-        self.id = id
-
-class JsonRpcHandler():
-    def can_handle(request: JsonRpcRequest) -> bool: 
-        raise NotImplementedError("")
-
-    async def handle(request: JsonRpcRequest):
-        raise NotImplementedError("")
-
-class JsonRpcSession():
-    '''
-    global state per websocket
-    '''
-    def __init__(self):
-        # Auth related. If not None, then account_id is the login user for the websocket.
-        self.account_id = None
-        self.exp = 0
 
 class JsonRpcHandlerImpl(JsonRpcHandler):
     '''
